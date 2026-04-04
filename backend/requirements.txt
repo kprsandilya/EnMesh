@@ -13,8 +13,9 @@ trimesh>=4.5.0
 numpy>=1.26.0
 
 # --- ML / TripoSR ---
-torch>=2.4.0
-torchvision>=0.19.0
+# torch & torchvision are installed separately in the Dockerfile (CPU-only wheels).
+# If installing outside Docker, run first:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 transformers>=4.45.0
 einops>=0.8.0
 omegaconf>=2.3.0
