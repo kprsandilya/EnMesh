@@ -11,18 +11,21 @@ namespace EnMesh.Editor
         // ── Persisted preferences ──────────────────────────────────────
         private const string PrefServerUrl = "EnMesh_ServerUrl";
         private const string PrefResolution = "EnMesh_Resolution";
-        private const string PrefRemoveBg   = "EnMesh_RemoveBg";
+        private const string PrefRemoveBg = "EnMesh_RemoveBg";
+        private const string PrefEnvironmentRootGoid = "EnMesh_EnvironmentRootGlobalId";
 
         // ── UI state ───────────────────────────────────────────────────
-        private string     _serverUrl;
-        private Texture2D  _projectTexture;
-        private string     _externalPath = "";
-        private int        _resolution;
-        private bool       _removeBg;
-        private bool       _generating;
-        private string     _status = "";
-        private float      _progress;
-        private Vector2    _scroll;
+        private string _serverUrl;
+        private Texture2D _projectTexture;
+        private string _externalPath = "";
+        private int _resolution;
+        private bool _removeBg;
+        private bool _generating;
+        private string _status = "";
+        private float _progress;
+        private Vector2 _scroll;
+
+        [SerializeField] private GameObject _environmentRoot;
 
         private CancellationTokenSource _cts;
 
@@ -30,15 +33,16 @@ namespace EnMesh.Editor
         public static void Open()
         {
             var w = GetWindow<EnMeshWindow>("EnMesh");
-            w.minSize = new Vector2(380, 560);
+            w.minSize = new Vector2(380, 720);
         }
 
         // ── Lifecycle ──────────────────────────────────────────────────
         private void OnEnable()
         {
-            _serverUrl  = EditorPrefs.GetString(PrefServerUrl, "http://localhost:8000");
+            _serverUrl = EditorPrefs.GetString(PrefServerUrl, "http://localhost:8000");
             _resolution = EditorPrefs.GetInt(PrefResolution, 256);
-            _removeBg   = EditorPrefs.GetBool(PrefRemoveBg, true);
+            _removeBg = EditorPrefs.GetBool(PrefRemoveBg, true);
+            RestoreEnvironmentRootFromPrefs();
         }
 
         private void OnDisable()
@@ -46,7 +50,32 @@ namespace EnMesh.Editor
             EditorPrefs.SetString(PrefServerUrl, _serverUrl);
             EditorPrefs.SetInt(PrefResolution, _resolution);
             EditorPrefs.SetBool(PrefRemoveBg, _removeBg);
+            PersistEnvironmentRootToPrefs();
             CancelGeneration();
+        }
+
+        private void RestoreEnvironmentRootFromPrefs()
+        {
+            string stored = EditorPrefs.GetString(PrefEnvironmentRootGoid, "");
+            if (string.IsNullOrEmpty(stored)) return;
+            if (!GlobalObjectId.TryParse(stored, out GlobalObjectId gid)) return;
+            EntityId entityId = GlobalObjectId.GlobalObjectIdentifierToEntityIdSlow(gid);
+            if (!entityId.IsValid()) return;
+            UnityEngine.Object obj = EditorUtility.EntityIdToObject(entityId);
+            if (obj is GameObject go && go != null)
+                _environmentRoot = go;
+        }
+
+        private void PersistEnvironmentRootToPrefs()
+        {
+            if (_environmentRoot == null)
+            {
+                EditorPrefs.DeleteKey(PrefEnvironmentRootGoid);
+                return;
+            }
+
+            GlobalObjectId gid = GlobalObjectId.GetGlobalObjectIdSlow(_environmentRoot);
+            EditorPrefs.SetString(PrefEnvironmentRootGoid, gid.ToString());
         }
 
         // ── Drawing ────────────────────────────────────────────────────
@@ -58,6 +87,7 @@ namespace EnMesh.Editor
             DrawServer();
             DrawImageInput();
             DrawSettings();
+            DrawEnvironment();
             DrawActions();
             DrawStatus();
 
@@ -120,8 +150,8 @@ namespace EnMesh.Editor
                 EditorGUILayout.Space(4);
                 float w = Mathf.Max(EditorGUIUtility.currentViewWidth - 40, 100);
                 float h = Mathf.Min(w, 200);
-                Rect r  = GUILayoutUtility.GetRect(w, h);
-                r.x     += 10;
+                Rect r = GUILayoutUtility.GetRect(w, h);
+                r.x += 10;
                 r.width -= 20;
                 GUI.DrawTexture(r, _projectTexture, ScaleMode.ScaleToFit);
             }
@@ -135,7 +165,54 @@ namespace EnMesh.Editor
             EditorGUILayout.LabelField("Settings", EditorStyles.boldLabel);
 
             _resolution = EditorGUILayout.IntSlider("Mesh Resolution", _resolution, 64, 512);
-            _removeBg   = EditorGUILayout.Toggle("Remove Background", _removeBg);
+            _removeBg = EditorGUILayout.Toggle("Remove Background", _removeBg);
+
+            Separator();
+        }
+
+        private void DrawEnvironment()
+        {
+            EditorGUILayout.Space(4);
+            EditorGUILayout.LabelField("Environment", EditorStyles.boldLabel);
+
+            EditorGUI.BeginChangeCheck();
+            _environmentRoot = (GameObject)EditorGUILayout.ObjectField(
+                "Environment Root", _environmentRoot, typeof(GameObject), true);
+            if (EditorGUI.EndChangeCheck())
+                PersistEnvironmentRootToPrefs();
+
+            if (_environmentRoot == null)
+            {
+                EditorGUILayout.HelpBox(
+                    "Assign an Environment Root. Generated meshes are parented under it. "
+                    + "Use the button below to create one.",
+                    MessageType.Warning);
+            }
+            else if (_environmentRoot.transform.childCount == 0)
+            {
+                EditorGUILayout.HelpBox(
+                    "Environment Root has no children yet. Generate meshes or place objects "
+                    + "under it before using Finalize Environment.",
+                    MessageType.Warning);
+            }
+
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Create New Environment Root", GUILayout.Height(24)))
+                CreateNewEnvironmentRoot();
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUI.BeginDisabledGroup(_environmentRoot == null
+                                         || _environmentRoot.transform.childCount == 0);
+            if (GUILayout.Button("Finalize Environment", GUILayout.Height(32)))
+                FinalizeEnvironment();
+            EditorGUI.EndDisabledGroup();
+
+            EditorGUILayout.HelpBox(
+                "Finalize duplicates the root in memory only, merges all MeshFilters into one mesh, "
+                + $"saves {EnMeshEnvironmentTools.CombinedMeshAssetPath} and "
+                + $"{EnMeshEnvironmentTools.FinalPrefabPath}, then discards the duplicate. "
+                + "Your original hierarchy is not modified.",
+                MessageType.None);
 
             Separator();
         }
@@ -146,8 +223,14 @@ namespace EnMesh.Editor
 
             bool hasInput = _projectTexture != null
                             || !string.IsNullOrEmpty(_externalPath);
+            bool canGenerate = hasInput && _environmentRoot != null;
 
-            EditorGUI.BeginDisabledGroup(_generating || !hasInput);
+            if (_environmentRoot == null && hasInput)
+                EditorGUILayout.HelpBox(
+                    "Assign Environment Root before generating — the mesh will be parented under it.",
+                    MessageType.Warning);
+
+            EditorGUI.BeginDisabledGroup(_generating || !canGenerate);
             if (GUILayout.Button(_generating ? "Generating …" : "Generate 3D Mesh",
                     GUILayout.Height(38)))
                 StartGeneration();
@@ -183,6 +266,56 @@ namespace EnMesh.Editor
             EditorGUI.DrawRect(r, new Color(0.5f, 0.5f, 0.5f, 0.25f));
         }
 
+        // ── Environment ────────────────────────────────────────────────
+        private void CreateNewEnvironmentRoot()
+        {
+            Debug.Log("[EnMesh] Creating new EnvironmentRoot GameObject …");
+            var go = new GameObject("EnvironmentRoot");
+            Undo.RegisterCreatedObjectUndo(go, "Create Environment Root");
+            if (Selection.activeGameObject != null)
+                Undo.SetTransformParent(
+                    go.transform,
+                    Selection.activeGameObject.transform,
+                    "Create Environment Root");
+            _environmentRoot = go;
+            Selection.activeGameObject = go;
+            PersistEnvironmentRootToPrefs();
+            EditorGUIUtility.PingObject(go);
+            Debug.Log("[EnMesh] EnvironmentRoot created and assigned.");
+            Repaint();
+        }
+
+        private void FinalizeEnvironment()
+        {
+            if (_environmentRoot == null)
+            {
+                Debug.LogWarning("[EnMesh] Finalize skipped: Environment Root is null.");
+                return;
+            }
+
+            if (_environmentRoot.transform.childCount == 0)
+            {
+                Debug.LogWarning("[EnMesh] Finalize skipped: Environment Root has no children.");
+                return;
+            }
+
+            Debug.Log($"[EnMesh] Finalize Environment: processing root '{_environmentRoot.name}' …");
+
+            bool ok = EnMeshEnvironmentTools.TryFinalizeEnvironment(_environmentRoot, out string err);
+            if (ok)
+            {
+                _status = $"Success: combined mesh and prefab saved under {EnMeshEnvironmentTools.GeneratedAssetsFolder}.";
+                Debug.Log("[EnMesh] Finalize Environment completed successfully.");
+            }
+            else
+            {
+                _status = $"Error: {err}";
+                Debug.LogError($"[EnMesh] Finalize Environment failed: {err}");
+            }
+
+            Repaint();
+        }
+
         // ── Actions ────────────────────────────────────────────────────
         private async void TestConnection()
         {
@@ -198,6 +331,13 @@ namespace EnMesh.Editor
 
         private async void StartGeneration()
         {
+            if (_environmentRoot == null)
+            {
+                _status = "Error: assign Environment Root first.";
+                Debug.LogWarning("[EnMesh] Generate aborted: no Environment Root.");
+                return;
+            }
+
             _generating = true;
             _cts = new CancellationTokenSource();
             _progress = 0f;
@@ -228,7 +368,10 @@ namespace EnMesh.Editor
                     Selection.activeObject = imported;
                 }
 
-                _status = $"Success: mesh saved to {assetPath}";
+                SetStatus("Spawning mesh under Environment Root …", 0.92f);
+                SpawnGeneratedMeshUnderEnvironmentRoot(assetPath);
+
+                _status = $"Success: mesh saved to {assetPath} and parented under '{_environmentRoot.name}'.";
                 _progress = 1f;
             }
             catch (OperationCanceledException)
@@ -260,16 +403,72 @@ namespace EnMesh.Editor
 
         private void SetStatus(string msg, float pct)
         {
-            _status   = msg;
+            _status = msg;
             _progress = pct;
             Repaint();
         }
 
         // ── Helpers ────────────────────────────────────────────────────
+        private void SpawnGeneratedMeshUnderEnvironmentRoot(string assetPath)
+        {
+            if (_environmentRoot == null)
+            {
+                Debug.LogWarning("[EnMesh] Spawn skipped: Environment Root is null.");
+                return;
+            }
+
+            Mesh mesh = LoadFirstMeshAtAssetPath(assetPath);
+            if (mesh == null)
+            {
+                Debug.LogWarning($"[EnMesh] No Mesh sub-asset found at '{assetPath}' — import may still be processing.");
+                return;
+            }
+
+            Undo.IncrementCurrentGroup();
+            string baseName = Path.GetFileNameWithoutExtension(assetPath);
+            var go = new GameObject(string.IsNullOrEmpty(baseName) ? "GeneratedMesh" : baseName);
+            Undo.RegisterCreatedObjectUndo(go, "EnMesh Spawn Generated Mesh");
+            Undo.RecordObject(go.transform, "EnMesh Parent Mesh");
+            go.transform.SetParent(_environmentRoot.transform, false);
+            go.transform.localPosition = Vector3.zero;
+            go.transform.localRotation = Quaternion.identity;
+            go.transform.localScale = Vector3.one;
+
+            var mf = Undo.AddComponent<MeshFilter>(go);
+            mf.sharedMesh = mesh;
+            var mr = Undo.AddComponent<MeshRenderer>(go);
+            mr.sharedMaterial = CreateSpawnMaterial();
+
+            Undo.SetCurrentGroupName("EnMesh Spawn Generated Mesh");
+            Selection.activeGameObject = go;
+            EditorGUIUtility.PingObject(go);
+
+            Debug.Log($"[EnMesh] Spawned '{go.name}' under '{_environmentRoot.name}'.");
+        }
+
+        private static Mesh LoadFirstMeshAtAssetPath(string assetPath)
+        {
+            foreach (UnityEngine.Object o in AssetDatabase.LoadAllAssetsAtPath(assetPath))
+            {
+                if (o is Mesh m)
+                    return m;
+            }
+
+            return null;
+        }
+
+        private static Material CreateSpawnMaterial()
+        {
+            Shader shader = Shader.Find("Universal Render Pipeline/Lit")
+                            ?? Shader.Find("Universal Render Pipeline/Simple Lit")
+                            ?? Shader.Find("Standard");
+            if (shader == null)
+                shader = Shader.Find("Hidden/InternalErrorShader");
+            return new Material(shader);
+        }
+
         private (byte[] data, string filename) ReadImage()
         {
-            // External path must win when set: users often leave an old Project Texture
-            // assigned and expect the file they just picked to be uploaded.
             if (!string.IsNullOrEmpty(_externalPath) && File.Exists(_externalPath))
                 return (File.ReadAllBytes(_externalPath), Path.GetFileName(_externalPath));
 
@@ -302,7 +501,7 @@ namespace EnMesh.Editor
             if (!Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
 
-            string ts   = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            string ts = DateTime.Now.ToString("yyyyMMdd_HHmmss");
             string name = $"mesh_{ts}.obj";
             string path = Path.Combine(dir, name);
             File.WriteAllBytes(path, data);
