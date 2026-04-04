@@ -68,7 +68,7 @@ async def generate(
     resolution: int = Query(config.DEFAULT_RESOLUTION, ge=64, le=512),
     remove_bg: bool = Query(True),
 ) -> Response:
-    if not generator.is_loaded:
+    if not generator.is_ready:
         raise HTTPException(503, detail="Model is still loading — try again shortly.")
 
     raw = await image.read()
@@ -103,7 +103,12 @@ async def generate(
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(status="ok", model_loaded=generator.is_loaded)
+    return HealthResponse(
+        status="ok",
+        model_loaded=generator.is_real,
+        simulated=not generator.is_real,
+        tsr_error=generator.tsr_import_error,
+    )
 
 
 if __name__ == "__main__":

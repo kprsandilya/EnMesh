@@ -1,4 +1,5 @@
 import logging
+import traceback
 
 import numpy as np
 import trimesh
@@ -6,38 +7,52 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
+_TSR_IMPORT_ERROR: str | None = None
+
 try:
     from tsr.system import TSR  # type: ignore[import-untyped]
 
     _HAS_TSR = True
-except ImportError:
+except Exception as _exc:
     _HAS_TSR = False
-    logger.warning(
-        "TripoSR (tsr) not importable — running in simulated mode. "
-        "Clone https://github.com/VAST-AI-Research/TripoSR and add its root to PYTHONPATH, "
-        "or use the provided Dockerfile."
+    _TSR_IMPORT_ERROR = "".join(traceback.format_exception(_exc))
+    logger.error(
+        "Failed to import TripoSR (tsr). The actual error:\n%s",
+        _TSR_IMPORT_ERROR,
     )
 
 
 class MeshGenerator:
     """Wraps TripoSR to turn a single image into a 3-D mesh."""
 
-    def __init__(self, device: str = "cuda:0", chunk_size: int = 8192) -> None:
+    def __init__(self, device: str = "cpu", chunk_size: int = 4096) -> None:
         self.device = device
         self.chunk_size = chunk_size
         self._model = None
         self._rembg_session = None
 
     @property
-    def is_loaded(self) -> bool:
+    def is_real(self) -> bool:
+        return self._model is not None
+
+    @property
+    def is_ready(self) -> bool:
         return self._model is not None or not _HAS_TSR
+
+    @property
+    def tsr_import_error(self) -> str | None:
+        return _TSR_IMPORT_ERROR
 
     def load(self, model_id: str = "stabilityai/TripoSR") -> None:
         if not _HAS_TSR:
-            logger.info("Simulated mode — no model to load")
+            logger.warning(
+                "TripoSR not available — server will return placeholder meshes. "
+                "Import error:\n%s",
+                _TSR_IMPORT_ERROR,
+            )
             return
 
-        import torch  # noqa: F811 — heavy import deferred
+        import torch  # noqa: F811
 
         logger.info("Loading TripoSR model '%s' on %s …", model_id, self.device)
         self._model = TSR.from_pretrained(
@@ -64,7 +79,7 @@ class MeshGenerator:
         resolution: int = 256,
         remove_bg: bool = True,
     ) -> trimesh.Trimesh:
-        if not _HAS_TSR:
+        if not _HAS_TSR or self._model is None:
             logger.info("Returning simulated mesh (TripoSR not available)")
             return self._simulated_mesh()
 
