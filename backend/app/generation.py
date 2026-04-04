@@ -13,8 +13,9 @@ try:
 except ImportError:
     _HAS_TSR = False
     logger.warning(
-        "TripoSR (tsr) not installed — running in simulated mode. "
-        "Install with:  pip install git+https://github.com/VAST-AI-Research/TripoSR.git"
+        "TripoSR (tsr) not importable — running in simulated mode. "
+        "Clone https://github.com/VAST-AI-Research/TripoSR and add its root to PYTHONPATH, "
+        "or use the provided Dockerfile."
     )
 
 
@@ -80,7 +81,9 @@ class MeshGenerator:
         with torch.no_grad():
             scene_codes = self._model([image], device=self.device)
 
-        meshes = self._model.extract_mesh(scene_codes, resolution=resolution)
+        meshes = self._model.extract_mesh(
+            scene_codes, False, resolution=resolution
+        )
         mesh = meshes[0]
         logger.info(
             "Mesh extracted — %d vertices, %d faces",
