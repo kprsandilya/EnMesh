@@ -109,6 +109,12 @@ namespace EnMesh.Editor
             }
             EditorGUILayout.EndHorizontal();
 
+            EditorGUILayout.HelpBox(
+                "Project Texture: an image already in this Unity project (Assets). "
+                + "External File: any image on disk (Desktop, Downloads, etc.). "
+                + "If both are set, External File is used.",
+                MessageType.None);
+
             if (_projectTexture != null)
             {
                 EditorGUILayout.Space(4);
@@ -262,6 +268,11 @@ namespace EnMesh.Editor
         // ── Helpers ────────────────────────────────────────────────────
         private (byte[] data, string filename) ReadImage()
         {
+            // External path must win when set: users often leave an old Project Texture
+            // assigned and expect the file they just picked to be uploaded.
+            if (!string.IsNullOrEmpty(_externalPath) && File.Exists(_externalPath))
+                return (File.ReadAllBytes(_externalPath), Path.GetFileName(_externalPath));
+
             if (_projectTexture != null)
             {
                 string asset = AssetDatabase.GetAssetPath(_projectTexture);
@@ -281,10 +292,6 @@ namespace EnMesh.Editor
                     return (null, null);
                 }
             }
-
-            if (!string.IsNullOrEmpty(_externalPath) && File.Exists(_externalPath))
-                return (File.ReadAllBytes(_externalPath),
-                        Path.GetFileName(_externalPath));
 
             return (null, null);
         }
