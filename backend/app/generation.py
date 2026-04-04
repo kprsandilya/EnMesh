@@ -90,8 +90,8 @@ class MeshGenerator:
 
             image = rembg.remove(image, session=self._rembg_session)
 
-        if image.mode != "RGBA":
-            image = image.convert("RGBA")
+        # TripoSR's image tokenizer expects RGB (3 channels); RGBA would break mean/std.
+        image = _pil_to_rgb(image)
 
         with torch.no_grad():
             scene_codes = self._model([image], device=self.device)
@@ -119,3 +119,14 @@ class MeshGenerator:
             dtype=np.int64,
         )
         return trimesh.Trimesh(vertices=vertices, faces=faces)
+
+
+def _pil_to_rgb(image: Image.Image) -> Image.Image:
+    """TripoSR expects RGB. Composite RGBA onto white so cutouts from rembg look sane."""
+    if image.mode == "RGB":
+        return image
+    if image.mode == "RGBA":
+        bg = Image.new("RGB", image.size, (255, 255, 255))
+        bg.paste(image, mask=image.split()[3])
+        return bg
+    return image.convert("RGB")
