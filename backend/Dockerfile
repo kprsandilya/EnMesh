@@ -20,7 +20,8 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 # TripoSR's own dependency pins (transformers, rembg, torchmcubes from git, etc.)
-RUN pip install --no-cache-dir -r /opt/TripoSR/requirements.txt
+RUN pip install --no-cache-dir -r /opt/TripoSR/requirements.txt && \
+    pip install --no-cache-dir onnxruntime
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
