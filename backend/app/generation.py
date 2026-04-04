@@ -1,50 +1,103 @@
 import logging
-import time
-import uuid
-from pathlib import Path
+
+import numpy as np
+import trimesh
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-BACKEND_ROOT = Path(__file__).resolve().parent.parent
-OUTPUT_DIR = BACKEND_ROOT / "outputs"
+try:
+    from tsr.system import TSR  # type: ignore[import-untyped]
+
+    _HAS_TSR = True
+except ImportError:
+    _HAS_TSR = False
+    logger.warning(
+        "TripoSR (tsr) not installed — running in simulated mode. "
+        "Install with:  pip install git+https://github.com/VAST-AI-Research/TripoSR.git"
+    )
 
 
-def _dummy_obj_content(prompt: str, image_path: str | None) -> str:
-    safe_prompt = prompt.replace("\n", " ").strip()[:200]
-    img_note = image_path if image_path else "(none)"
-    return f"""# EnMesh simulated pipeline output
-# prompt: {safe_prompt}
-# image_path: {img_note}
-o enmesh_dummy
-v 0.0 0.0 0.0
-v 1.0 0.0 0.0
-v 0.0 1.0 0.0
-v 0.0 0.0 1.0
-f 1 2 3
-f 1 3 4
-f 1 4 2
-f 2 4 3
-"""
+class MeshGenerator:
+    """Wraps TripoSR to turn a single image into a 3-D mesh."""
 
+    def __init__(self, device: str = "cuda:0", chunk_size: int = 8192) -> None:
+        self.device = device
+        self.chunk_size = chunk_size
+        self._model = None
+        self._rembg_session = None
 
-def run_simulated_pipeline(prompt: str, image_path: str | None) -> Path:
-    """
-    Simulate a 3D generation pipeline and write a minimal valid Wavefront OBJ.
-    Returns the absolute path to the written file.
-    """
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    mesh_id = uuid.uuid4().hex[:12]
-    out_path = OUTPUT_DIR / f"mesh_{mesh_id}.obj"
+    @property
+    def is_loaded(self) -> bool:
+        return self._model is not None or not _HAS_TSR
 
-    logger.info("Pipeline: preprocessing (prompt length=%d)", len(prompt))
-    time.sleep(0.05)
-    if image_path:
-        logger.info("Pipeline: conditioning on image_path=%s", image_path)
-        time.sleep(0.05)
-    logger.info("Pipeline: neural inference (simulated)")
-    time.sleep(0.05)
-    logger.info("Pipeline: mesh extraction & cleanup")
+    def load(self, model_id: str = "stabilityai/TripoSR") -> None:
+        if not _HAS_TSR:
+            logger.info("Simulated mode — no model to load")
+            return
 
-    out_path.write_text(_dummy_obj_content(prompt, image_path), encoding="utf-8")
-    logger.info("Pipeline: wrote %s", out_path)
-    return out_path.resolve()
+        import torch  # noqa: F811 — heavy import deferred
+
+        logger.info("Loading TripoSR model '%s' on %s …", model_id, self.device)
+        self._model = TSR.from_pretrained(
+            model_id,
+            config_name="config.yaml",
+            weight_name="model.ckpt",
+        )
+        self._model.renderer.set_chunk_size(self.chunk_size)
+        self._model.to(self.device)
+        logger.info("TripoSR model loaded")
+
+        try:
+            import rembg  # type: ignore[import-untyped]
+
+            self._rembg_session = rembg.new_session()
+            logger.info("Background-removal session ready")
+        except ImportError:
+            logger.warning("rembg not installed — background removal disabled")
+
+    def generate(
+        self,
+        image: Image.Image,
+        *,
+        resolution: int = 256,
+        remove_bg: bool = True,
+    ) -> trimesh.Trimesh:
+        if not _HAS_TSR:
+            logger.info("Returning simulated mesh (TripoSR not available)")
+            return self._simulated_mesh()
+
+        import torch  # noqa: F811
+
+        if remove_bg and self._rembg_session is not None:
+            import rembg  # type: ignore[import-untyped]
+
+            image = rembg.remove(image, session=self._rembg_session)
+
+        if image.mode != "RGBA":
+            image = image.convert("RGBA")
+
+        with torch.no_grad():
+            scene_codes = self._model([image], device=self.device)
+
+        meshes = self._model.extract_mesh(scene_codes, resolution=resolution)
+        mesh = meshes[0]
+        logger.info(
+            "Mesh extracted — %d vertices, %d faces",
+            len(mesh.vertices),
+            len(mesh.faces),
+        )
+        return mesh
+
+    @staticmethod
+    def _simulated_mesh() -> trimesh.Trimesh:
+        """Tetrahedron placeholder used when no ML model is available."""
+        vertices = np.array(
+            [[0, 0, 0], [1, 0, 0], [0.5, 1, 0], [0.5, 0.5, 1]],
+            dtype=np.float64,
+        )
+        faces = np.array(
+            [[0, 1, 2], [0, 2, 3], [0, 3, 1], [1, 3, 2]],
+            dtype=np.int64,
+        )
+        return trimesh.Trimesh(vertices=vertices, faces=faces)

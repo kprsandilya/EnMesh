@@ -1,0 +1,21 @@
+services:
+  enmesh-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - ENMESH_DEVICE=cuda:0
+      - ENMESH_RESOLUTION=256
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - model-cache:/root/.cache
+    restart: unless-stopped
+
+volumes:
+  model-cache:

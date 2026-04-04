@@ -55,3 +55,6 @@ EnMesh/*.stacktrace
 
 # Plastic SCM
 EnMesh/ignore.conf
+
+# Misc
+.DS_Store
