@@ -8,13 +8,15 @@ from urllib.parse import quote
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
+from PIL import Image, ImageOps
 from starlette.staticfiles import StaticFiles
 
 from app import config
 from app.classification import AutoLayoutClassifierService, SentenceEmbeddingRuntime
 from app.generation import MeshGenerator
 from app.filename_safe import sanitize_stem_for_storage, stem_from_upload
+from app.mesh_normalize import apply_uniform_extent
+from app.mesh_orientation import apply_triposr_gradio_view_alignment
 from app.mesh_output import save_generated_mesh
 from app.schemas import (
     AutoLayoutMeshOut,
@@ -92,6 +94,32 @@ async def generate(
     format: str = Query("obj", pattern="^(obj|glb)$"),
     resolution: int = Query(config.DEFAULT_RESOLUTION, ge=64, le=512),
     remove_bg: bool = Query(True),
+    max_extent: float | None = Query(
+        None,
+        ge=0,
+        le=500,
+        description=(
+            "Uniform scale: longest AABB edge becomes this (world units); "
+            "makes every asset the same max size. 0 = off (preserve relative scale). "
+            "Omit = ENMESH_MESH_NORMALIZE_MAX_EXTENT (default 0)."
+        ),
+    ),
+    scale: float | None = Query(
+        None,
+        gt=0,
+        le=1e6,
+        description=(
+            "Uniform multiplier after centering / max_extent (relative sizing vs that result). "
+            "Omit = ENMESH_DEFAULT_MESH_SCALE (default 1)."
+        ),
+    ),
+    align_view: bool | None = Query(
+        None,
+        description=(
+            "Apply TripoSR Gradio view rotation so the mesh matches the conditioning image "
+            "convention. Omit = ENMESH_ALIGN_TRIPOSR_VIEW."
+        ),
+    ),
 ) -> GenerateMeshResponse:
     if not generator.is_ready:
         raise HTTPException(503, detail="Model is still loading — try again shortly.")
@@ -101,6 +129,9 @@ async def generate(
         pil_image = Image.open(io.BytesIO(raw))
     except Exception as exc:
         raise HTTPException(400, detail=f"Could not decode image: {exc}") from exc
+
+    if config.APPLY_EXIF_ORIENTATION:
+        pil_image = ImageOps.exif_transpose(pil_image)
 
     filename = image.filename or "upload.png"
     source_stem = sanitize_stem_for_storage(stem_from_upload(filename))
@@ -112,15 +143,30 @@ async def generate(
         ),
     )
 
-    abs_path, mesh_name = await loop.run_in_executor(
-        None,
-        lambda: save_generated_mesh(
-            mesh,
+    extent = (
+        config.MESH_NORMALIZE_MAX_EXTENT if max_extent is None else float(max_extent)
+    )
+    center = config.MESH_NORMALIZE_CENTER
+    do_align = config.ALIGN_TRIPOSR_VIEW if align_view is None else align_view
+    scale_f = config.DEFAULT_MESH_SCALE if scale is None else float(scale)
+
+    def _prepare_and_save():
+        m = (
+            apply_triposr_gradio_view_alignment(mesh)
+            if do_align
+            else mesh.copy()
+        )
+        m = apply_uniform_extent(m, extent, center=center)
+        if scale_f != 1.0:
+            m.apply_scale(scale_f)
+        return save_generated_mesh(
+            m,
             config.OUTPUTS_DIR,
             upload_filename=filename,
             file_type=format,
-        ),
-    )
+        )
+
+    abs_path, mesh_name = await loop.run_in_executor(None, _prepare_and_save)
     ext = "glb" if format.lower() == "glb" else "obj"
     fname = f"{mesh_name}.{ext}"
     download_url = f"/output-files/{quote(fname)}"

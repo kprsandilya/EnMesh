@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -60,7 +61,10 @@ namespace EnMesh.Editor
             int resolution = 256,
             bool removeBackground = true,
             string format = "obj",
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            float? maxExtentMeters = null,
+            float scale = 1f,
+            bool alignViewToImage = true)
         {
             using var form = new MultipartFormDataContent();
             var imageContent = new ByteArrayContent(imageData);
@@ -68,11 +72,19 @@ namespace EnMesh.Editor
                 GuessMediaType(filename));
             form.Add(imageContent, "image", filename);
 
-            string url =
-                $"{serverUrl.TrimEnd('/')}/generate" +
-                $"?format={Uri.EscapeDataString(format)}" +
-                $"&resolution={resolution}" +
-                $"&remove_bg={removeBackground.ToString().ToLower()}";
+            var inv = CultureInfo.InvariantCulture;
+            var q = new System.Collections.Generic.List<string>
+            {
+                $"format={Uri.EscapeDataString(format)}",
+                $"resolution={resolution}",
+                $"remove_bg={removeBackground.ToString().ToLowerInvariant()}",
+                $"scale={scale.ToString(inv)}",
+                $"align_view={(alignViewToImage ? "true" : "false")}",
+            };
+            if (maxExtentMeters.HasValue)
+                q.Add($"max_extent={maxExtentMeters.Value.ToString(inv)}");
+
+            string url = $"{serverUrl.TrimEnd('/')}/generate?{string.Join("&", q)}";
 
             using var post = await Http.PostAsync(url, form, ct);
             string body = await post.Content.ReadAsStringAsync();

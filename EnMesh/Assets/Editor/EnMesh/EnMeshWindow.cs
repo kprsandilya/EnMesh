@@ -17,6 +17,9 @@ namespace EnMesh.Editor
         private const string PrefServerUrl = "EnMesh_ServerUrl";
         private const string PrefResolution = "EnMesh_Resolution";
         private const string PrefRemoveBg = "EnMesh_RemoveBg";
+        private const string PrefMeshScale = "EnMesh_MeshScale";
+        private const string PrefAlignView = "EnMesh_AlignView";
+        private const string PrefMaxExtent = "EnMesh_MaxExtentOverride";
         private const string PrefEnvironmentRootGoid = "EnMesh_EnvironmentRootGlobalId";
         private const string PrefLayoutCell = "EnMesh_LayoutCell";
         private const string PrefLayoutWidth = "EnMesh_LayoutWidth";
@@ -34,6 +37,10 @@ namespace EnMesh.Editor
         private string _externalPath = "";
         private int _resolution;
         private bool _removeBg;
+        private float _meshScale = 1f;
+        private bool _alignViewToImage = true;
+        /// <summary>Longest AABB edge in meters after other steps; &lt; 0 = do not send (server default).</summary>
+        private float _maxExtentMetersOverride = -1f;
         private bool _generating;
         private string _status = "";
         private float _progress;
@@ -67,6 +74,9 @@ namespace EnMesh.Editor
             _serverUrl = EditorPrefs.GetString(PrefServerUrl, "http://localhost:8000");
             _resolution = EditorPrefs.GetInt(PrefResolution, 256);
             _removeBg = EditorPrefs.GetBool(PrefRemoveBg, true);
+            _meshScale = EditorPrefs.GetFloat(PrefMeshScale, 1f);
+            _alignViewToImage = EditorPrefs.GetBool(PrefAlignView, true);
+            _maxExtentMetersOverride = EditorPrefs.GetFloat(PrefMaxExtent, -1f);
             _layoutCellSize = EditorPrefs.GetFloat(PrefLayoutCell, 1f);
             _layoutAreaWidth = EditorPrefs.GetFloat(PrefLayoutWidth, 10f);
             _layoutAreaDepth = EditorPrefs.GetFloat(PrefLayoutDepth, 10f);
@@ -88,6 +98,9 @@ namespace EnMesh.Editor
             EditorPrefs.SetString(PrefServerUrl, _serverUrl);
             EditorPrefs.SetInt(PrefResolution, _resolution);
             EditorPrefs.SetBool(PrefRemoveBg, _removeBg);
+            EditorPrefs.SetFloat(PrefMeshScale, _meshScale);
+            EditorPrefs.SetBool(PrefAlignView, _alignViewToImage);
+            EditorPrefs.SetFloat(PrefMaxExtent, _maxExtentMetersOverride);
             EditorPrefs.SetFloat(PrefLayoutCell, _layoutCellSize);
             EditorPrefs.SetFloat(PrefLayoutWidth, _layoutAreaWidth);
             EditorPrefs.SetFloat(PrefLayoutDepth, _layoutAreaDepth);
@@ -213,6 +226,21 @@ namespace EnMesh.Editor
 
             _resolution = EditorGUILayout.IntSlider("Mesh Resolution", _resolution, 64, 512);
             _removeBg = EditorGUILayout.Toggle("Remove Background", _removeBg);
+            _meshScale = EditorGUILayout.FloatField(
+                new GUIContent("Mesh scale", "Uniform multiplier after server centering / max-extent step."),
+                _meshScale);
+            if (_meshScale <= 0f)
+                _meshScale = 1f;
+            _alignViewToImage = EditorGUILayout.Toggle(
+                new GUIContent(
+                    "Align mesh to image",
+                    "TripoSR Gradio-style rotation so the model faces the camera like the input image."),
+                _alignViewToImage);
+            _maxExtentMetersOverride = EditorGUILayout.FloatField(
+                new GUIContent(
+                    "Max AABB edge (m)",
+                    "Longest bounding-box edge in meters. Negative = use server env default; 0 = no uniform fit."),
+                _maxExtentMetersOverride);
 
             Separator();
         }
@@ -634,9 +662,13 @@ namespace EnMesh.Editor
                 }
 
                 SetStatus("Uploading & generating mesh (this can take a minute) …", 0.2f);
+                float? maxExtent = _maxExtentMetersOverride < 0f
+                    ? (float?)null
+                    : _maxExtentMetersOverride;
                 (byte[] meshBytes, string meshName, string assetStem) = await EnMeshClient.GenerateMeshAsync(
                     _serverUrl, data, filename,
-                    _resolution, _removeBg, "obj", _cts.Token);
+                    _resolution, _removeBg, "obj", _cts.Token,
+                    maxExtent, _meshScale, _alignViewToImage);
 
                 SetStatus("Saving mesh to project …", 0.85f);
                 string assetPath = WriteMeshAsset(meshBytes, assetStem, meshName);
