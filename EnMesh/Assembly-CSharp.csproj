@@ -1345,6 +1345,10 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="EnMesh.Runtime.csproj">
+      <Project>{EEF89966-0721-6C3B-A895-F128BAE9C5F4}</Project>
+      <Name>EnMesh.Runtime</Name>
+    </ProjectReference>
     <ProjectReference Include="EnMesh.Editor.csproj">
       <Project>{FCEF9EEA-1D99-4C18-489E-19B800096891}</Project>
       <Name>EnMesh.Editor</Name>

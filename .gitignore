@@ -34,6 +34,8 @@ EnMesh/[Uu]ser[Ss]ettings/
 EnMesh/[Mm]emoryCaptures/
 EnMesh/[Rr]ecordings/
 
+EnMesh/Assets
+
 # Visual Studio / Rider / VS Code (Unity)
 EnMesh/.vs/
 EnMesh/*.csproj.user

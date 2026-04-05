@@ -30,6 +30,7 @@ namespace EnMesh.Editor
         private const string PrefLayoutSeed = "EnMesh_LayoutSeed";
         private const string PrefFinalizeMeshBase = "EnMesh_FinalizeMeshBase";
         private const string PrefFinalizePrefabBase = "EnMesh_FinalizePrefabBase";
+        private const float ContentSidePadding = 14f;
 
         // ── UI state ───────────────────────────────────────────────────
         private string _serverUrl;
@@ -61,11 +62,18 @@ namespace EnMesh.Editor
 
         private CancellationTokenSource _cts;
 
+        private GUIStyle _styleTitleCenter;
+        private GUIStyle _styleSubtitleCenter;
+        private GUIStyle _styleSectionHeading;
+        private GUIStyle _styleCard;
+        private GUIStyle _stylePrimaryButton;
+        private GUIStyle _styleSecondaryButton;
+
         [MenuItem("EnMesh/Generate 3D Mesh %#m")]
         public static void Open()
         {
             var w = GetWindow<EnMeshWindow>("EnMesh");
-            w.minSize = new Vector2(400, 900);
+            w.minSize = new Vector2(420, 520);
         }
 
         // ── Lifecycle ──────────────────────────────────────────────────
@@ -141,7 +149,12 @@ namespace EnMesh.Editor
         // ── Drawing ────────────────────────────────────────────────────
         private void OnGUI()
         {
+            EnsureGuiStyles();
+
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.Space(ContentSidePadding);
+            EditorGUILayout.BeginVertical(GUILayout.ExpandWidth(true));
 
             DrawHeader();
             DrawServer();
@@ -151,46 +164,93 @@ namespace EnMesh.Editor
             DrawActions();
             DrawStatus();
 
+            EditorGUILayout.EndVertical();
+            GUILayout.Space(ContentSidePadding);
+            EditorGUILayout.EndHorizontal();
             EditorGUILayout.EndScrollView();
+        }
+
+        private void EnsureGuiStyles()
+        {
+            if (_styleTitleCenter != null)
+                return;
+
+            _styleTitleCenter = new GUIStyle(EditorStyles.boldLabel)
+            {
+                fontSize = 20,
+                alignment = TextAnchor.MiddleCenter,
+                margin = new RectOffset(0, 0, 8, 2)
+            };
+
+            Color subtitle = EditorGUIUtility.isProSkin
+                ? new Color(0.62f, 0.62f, 0.65f)
+                : new Color(0.38f, 0.38f, 0.4f);
+            _styleSubtitleCenter = new GUIStyle(EditorStyles.miniLabel)
+            {
+                fontSize = 11,
+                alignment = TextAnchor.MiddleCenter,
+                normal = { textColor = subtitle },
+                margin = new RectOffset(0, 0, 0, 10)
+            };
+
+            _styleSectionHeading = new GUIStyle(EditorStyles.boldLabel)
+            {
+                fontSize = 12,
+                margin = new RectOffset(0, 0, 0, 8)
+            };
+
+            _styleCard = new GUIStyle(EditorStyles.helpBox)
+            {
+                padding = new RectOffset(12, 12, 12, 12),
+                margin = new RectOffset(0, 0, 0, 10)
+            };
+
+            _stylePrimaryButton = new GUIStyle(GUI.skin.button)
+            {
+                fontStyle = FontStyle.Bold,
+                fontSize = 12,
+                fixedHeight = 36,
+                margin = new RectOffset(0, 0, 4, 4)
+            };
+
+            _styleSecondaryButton = new GUIStyle(GUI.skin.button)
+            {
+                fixedHeight = 22,
+                fontSize = 11
+            };
         }
 
         private void DrawHeader()
         {
-            EditorGUILayout.Space(10);
-            GUILayout.Label("EnMesh",
-                new GUIStyle(EditorStyles.boldLabel)
-                    { fontSize = 20, alignment = TextAnchor.MiddleCenter });
-            GUILayout.Label("Image  →  3D Mesh",
-                new GUIStyle(EditorStyles.centeredGreyMiniLabel) { fontSize = 12 });
-            EditorGUILayout.Space(4);
+            GUILayout.Label("EnMesh", _styleTitleCenter);
+            GUILayout.Label("Image to 3D mesh", _styleSubtitleCenter);
             Separator();
         }
 
         private void DrawServer()
         {
-            EditorGUILayout.Space(4);
-            EditorGUILayout.LabelField("Server", EditorStyles.boldLabel);
+            EditorGUILayout.BeginVertical(_styleCard);
+            GUILayout.Label("Server", _styleSectionHeading);
 
             EditorGUILayout.BeginHorizontal();
             _serverUrl = EditorGUILayout.TextField("URL", _serverUrl);
-            if (GUILayout.Button("Test", GUILayout.Width(50)))
+            if (GUILayout.Button("Test", _styleSecondaryButton, GUILayout.Width(64)))
                 TestConnection();
             EditorGUILayout.EndHorizontal();
-
-            Separator();
+            EditorGUILayout.EndVertical();
         }
 
         private void DrawImageInput()
         {
-            EditorGUILayout.Space(4);
-            EditorGUILayout.LabelField("Input Image", EditorStyles.boldLabel);
+            EditorGUILayout.BeginVertical(_styleCard);
+            GUILayout.Label("Input image", _styleSectionHeading);
 
             _projectTexture = (Texture2D)EditorGUILayout.ObjectField(
-                "Project Texture", _projectTexture, typeof(Texture2D), false);
+                "Project texture", _projectTexture, typeof(Texture2D), false);
 
             EditorGUILayout.BeginHorizontal();
-            _externalPath = EditorGUILayout.TextField("External File", _externalPath);
-            if (GUILayout.Button("…", GUILayout.Width(28)))
+            _externalPath = EditorGUILayout.TextField("External file", _externalPath);
+            if (GUILayout.Button("Browse…", _styleSecondaryButton, GUILayout.Width(72)))
             {
                 string picked = EditorUtility.OpenFilePanel(
                     "Select Image", "", "png,jpg,jpeg,bmp,tga,tiff");
@@ -200,32 +260,36 @@ namespace EnMesh.Editor
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.HelpBox(
-                "Project Texture: an image already in this Unity project (Assets). "
-                + "External File: any image on disk (Desktop, Downloads, etc.). "
-                + "If both are set, External File is used.",
+                "Project texture: an asset already in this project. "
+                + "External file: any image on disk. If both are set, the external file is used.",
                 MessageType.None);
 
             if (_projectTexture != null)
             {
-                EditorGUILayout.Space(4);
-                float w = Mathf.Max(EditorGUIUtility.currentViewWidth - 40, 100);
-                float h = Mathf.Min(w, 200);
+                EditorGUILayout.Space(6);
+                float inner = Mathf.Max(
+                    EditorGUIUtility.currentViewWidth - ContentSidePadding * 2f - 48f,
+                    80f);
+                float w = inner;
+                float h = Mathf.Min(w * 0.55f, 200f);
                 Rect r = GUILayoutUtility.GetRect(w, h);
-                r.x += 10;
-                r.width -= 20;
+                EditorGUI.DrawRect(r, EditorGUIUtility.isProSkin
+                    ? new Color(0.12f, 0.12f, 0.12f, 1f)
+                    : new Color(0.94f, 0.94f, 0.94f, 1f));
+                r = new Rect(r.x + 2, r.y + 2, r.width - 4, r.height - 4);
                 GUI.DrawTexture(r, _projectTexture, ScaleMode.ScaleToFit);
             }
 
-            Separator();
+            EditorGUILayout.EndVertical();
         }
 
         private void DrawSettings()
         {
-            EditorGUILayout.Space(4);
-            EditorGUILayout.LabelField("Settings", EditorStyles.boldLabel);
+            EditorGUILayout.BeginVertical(_styleCard);
+            GUILayout.Label("Generation settings", _styleSectionHeading);
 
-            _resolution = EditorGUILayout.IntSlider("Mesh Resolution", _resolution, 64, 512);
-            _removeBg = EditorGUILayout.Toggle("Remove Background", _removeBg);
+            _resolution = EditorGUILayout.IntSlider("Mesh resolution", _resolution, 64, 512);
+            _removeBg = EditorGUILayout.Toggle("Remove background", _removeBg);
             _meshScale = EditorGUILayout.FloatField(
                 new GUIContent("Mesh scale", "Uniform multiplier after server centering / max-extent step."),
                 _meshScale);
@@ -242,44 +306,42 @@ namespace EnMesh.Editor
                     "Longest bounding-box edge in meters. Negative = use server env default; 0 = no uniform fit."),
                 _maxExtentMetersOverride);
 
-            Separator();
+            EditorGUILayout.EndVertical();
         }
 
         private void DrawEnvironment()
         {
-            EditorGUILayout.Space(4);
-            EditorGUILayout.LabelField("Environment", EditorStyles.boldLabel);
+            EditorGUILayout.BeginVertical(_styleCard);
+            GUILayout.Label("Environment", _styleSectionHeading);
 
             EditorGUI.BeginChangeCheck();
             _environmentRoot = (GameObject)EditorGUILayout.ObjectField(
-                "Environment Root", _environmentRoot, typeof(GameObject), true);
+                "Environment root", _environmentRoot, typeof(GameObject), true);
             if (EditorGUI.EndChangeCheck())
                 PersistEnvironmentRootToPrefs();
 
             if (_environmentRoot == null)
             {
                 EditorGUILayout.HelpBox(
-                    "Assign an Environment Root. Generated meshes are parented under it. "
-                    + "Use the button below to create one.",
+                    "Assign an environment root. Generated meshes are parented under it, "
+                    + "or use Create below.",
                     MessageType.Warning);
             }
             else if (_environmentRoot.transform.childCount == 0)
             {
                 EditorGUILayout.HelpBox(
-                    "Environment Root has no children yet. Generate meshes or place objects "
-                    + "under it before using Finalize Environment.",
+                    "This root has no children yet. Generate meshes or place objects under it "
+                    + "before using Finalize Environment.",
                     MessageType.Warning);
             }
 
-            EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button("Create New Environment Root", GUILayout.Height(24)))
+            if (GUILayout.Button("Create new environment root", _styleSecondaryButton))
                 CreateNewEnvironmentRoot();
-            EditorGUILayout.EndHorizontal();
 
             DrawAutoLayout();
 
             EditorGUILayout.Space(4);
-            EditorGUILayout.LabelField("Finalize output", EditorStyles.boldLabel);
+            GUILayout.Label("Finalize output", _styleSectionHeading);
             _finalizeMeshBaseName = EditorGUILayout.TextField(
                 new GUIContent(
                     "Combined mesh name",
@@ -293,7 +355,7 @@ namespace EnMesh.Editor
 
             EditorGUI.BeginDisabledGroup(_environmentRoot == null
                                          || _environmentRoot.transform.childCount == 0);
-            if (GUILayout.Button("Finalize Environment", GUILayout.Height(32)))
+            if (GUILayout.Button("Finalize environment", GUILayout.Height(30)))
                 FinalizeEnvironment();
             EditorGUI.EndDisabledGroup();
 
@@ -302,17 +364,18 @@ namespace EnMesh.Editor
             string prefabOut = $"{EnMeshEnvironmentTools.GeneratedAssetsFolder}/" +
                                $"{EnMeshEnvironmentTools.SanitizeAssetBaseName(_finalizePrefabBaseName, EnMeshEnvironmentTools.DefaultPrefabBaseName)}.prefab";
             EditorGUILayout.HelpBox(
-                "Finalize duplicates the root in memory only, merges all MeshFilters into one mesh, "
+                "Finalize duplicates the root in memory, merges MeshFilters into one mesh, "
                 + $"then saves:\n• {meshOut}\n• {prefabOut}\n"
-                + "Your original hierarchy is not modified.",
+                + "Your scene hierarchy is not modified.",
                 MessageType.None);
 
-            Separator();
+            EditorGUILayout.EndVertical();
         }
 
         private void DrawActions()
         {
-            EditorGUILayout.Space(8);
+            EditorGUILayout.BeginVertical(_styleCard);
+            GUILayout.Label("Generate", _styleSectionHeading);
 
             bool hasInput = _projectTexture != null
                             || !string.IsNullOrEmpty(_externalPath);
@@ -320,24 +383,31 @@ namespace EnMesh.Editor
 
             if (_environmentRoot == null && hasInput)
                 EditorGUILayout.HelpBox(
-                    "Assign Environment Root before generating — the mesh will be parented under it.",
+                    "Assign an environment root before generating — the mesh will be parented under it.",
                     MessageType.Warning);
 
             EditorGUI.BeginDisabledGroup(_generating || !canGenerate);
-            if (GUILayout.Button(_generating ? "Generating …" : "Generate 3D Mesh",
-                    GUILayout.Height(38)))
+            if (GUILayout.Button(_generating ? "Generating…" : "Generate 3D mesh", _stylePrimaryButton))
                 StartGeneration();
             EditorGUI.EndDisabledGroup();
 
-            if (_generating && GUILayout.Button("Cancel"))
-                CancelGeneration();
+            if (_generating)
+            {
+                EditorGUILayout.BeginHorizontal();
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button("Cancel", _styleSecondaryButton, GUILayout.Width(88)))
+                    CancelGeneration();
+                EditorGUILayout.EndHorizontal();
+            }
+
+            EditorGUILayout.EndVertical();
         }
 
         private void DrawStatus()
         {
             if (string.IsNullOrEmpty(_status)) return;
 
-            EditorGUILayout.Space(8);
+            EditorGUILayout.Space(4);
             MessageType mt = _status.StartsWith("Error", StringComparison.OrdinalIgnoreCase)
                 ? MessageType.Error
                 : _status.StartsWith("Success", StringComparison.OrdinalIgnoreCase)
@@ -347,23 +417,27 @@ namespace EnMesh.Editor
 
             if (_generating)
             {
-                Rect bar = GUILayoutUtility.GetRect(0, 18);
+                EditorGUILayout.Space(4);
+                Rect bar = GUILayoutUtility.GetRect(0, 20);
                 EditorGUI.ProgressBar(bar, _progress, $"{_progress * 100:F0} %");
             }
         }
 
         private static void Separator()
         {
-            EditorGUILayout.Space(2);
+            EditorGUILayout.Space(4);
             Rect r = EditorGUILayout.GetControlRect(false, 1);
-            EditorGUI.DrawRect(r, new Color(0.5f, 0.5f, 0.5f, 0.25f));
+            EditorGUI.DrawRect(r, EditorGUIUtility.isProSkin
+                ? new Color(1f, 1f, 1f, 0.08f)
+                : new Color(0f, 0f, 0f, 0.12f));
+            EditorGUILayout.Space(10);
         }
 
         // ── Environment ────────────────────────────────────────────────
         private void DrawAutoLayout()
         {
-            EditorGUILayout.Space(6);
-            EditorGUILayout.LabelField("Auto layout", EditorStyles.boldLabel);
+            EditorGUILayout.Space(8);
+            GUILayout.Label("Auto layout", _styleSectionHeading);
 
             _layoutCellSize = EditorGUILayout.FloatField(
                 "Grid cell size",
@@ -404,8 +478,8 @@ namespace EnMesh.Editor
                     : " Files in EnMesh/Generated are only assets until you drag instances into the scene under this root, "
                       + "or use Generate 3D Mesh (which adds PlaceableItem automatically).";
                 EditorGUILayout.HelpBox(
-                    "Auto Layout only considers **scene objects** under Environment Root that have a **PlaceableItem** "
-                    + "(Role: Anchor / Support / Fill). Optional Category is for custom phases."
+                    "Auto layout only considers scene objects under the environment root that have a "
+                    + "PlaceableItem (role: Anchor, Support, or Fill). Optional category is for custom phases."
                     + extra,
                     MessageType.Warning);
             }
@@ -415,18 +489,18 @@ namespace EnMesh.Editor
                     meshWithoutPlaceable > 0
                         ? $"Add PlaceableItem to {meshWithoutPlaceable} mesh object(s)"
                         : "Add PlaceableItem to mesh objects",
-                    GUILayout.Height(24)))
+                    _styleSecondaryButton))
                 AddPlaceableItemToMeshObjectsUnderRoot();
             EditorGUI.EndDisabledGroup();
 
             EditorGUI.BeginDisabledGroup(_environmentRoot == null || placeableCount == 0);
-            if (GUILayout.Button("Auto Layout", GUILayout.Height(32)))
+            if (GUILayout.Button("Run auto layout", GUILayout.Height(30)))
                 RunAutoLayout();
             EditorGUI.EndDisabledGroup();
 
             EditorGUILayout.HelpBox(
-                "Auto Layout calls the server (/auto-layout) to set Anchor / Support / Fill from mesh names "
-                + "(Layout Source from Generate, else GameObject name), then runs anchors → supports → fill.",
+                "Calls the server (/auto-layout) to assign Anchor / Support / Fill from mesh names "
+                + "(layout source from Generate, otherwise the GameObject name), then runs anchors → supports → fill.",
                 MessageType.None);
         }
 
