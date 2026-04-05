@@ -1,21 +1,13 @@
-# Installed after /opt/TripoSR/requirements.txt in Docker (TripoSR pins torchmcubes, transformers, etc.)
-
-# --- Core API ---
+# Core API
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 python-multipart>=0.0.18
 pydantic>=2.9.0
 
-# --- Overlap / extras (TripoSR also lists rembg, trimesh, Pillow — we allow newer where useful) ---
+# Image / mesh I/O (mesh endpoint uses a placeholder unless TripoSR is on PYTHONPATH)
 Pillow>=11.0.0
-rembg>=2.0.57
 trimesh>=4.5.0
 numpy>=1.26.0
 
-# TripoSR is not on PyPI: Dockerfile clones https://github.com/VAST-AI-Research/TripoSR to /opt/TripoSR
-# and sets PYTHONPATH. For a local venv without Docker:
-#   git clone https://github.com/VAST-AI-Research/TripoSR.git
-#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-#   pip install -r TripoSR/requirements.txt
-#   pip install -r backend/requirements.txt
-#   export PYTHONPATH=/path/to/TripoSR
+# Placement classification (downloads model on first use)
+sentence-transformers>=3.0.0
