@@ -4,6 +4,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - ENMESH_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
       - ENMESH_DEVICE=cpu
       - ENMESH_RESOLUTION=128
       - ENMESH_CHUNK_SIZE=4096

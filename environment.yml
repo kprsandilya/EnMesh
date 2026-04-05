@@ -3,6 +3,14 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - python=3.13
+  - python=3.11
   - fastapi
   - uvicorn
+  - pillow
+  - pip
+  - pip:
+    - sentence-transformers>=3.0.0
+    - numpy>=1.26.0
+    - trimesh>=4.5.0
+    - pydantic>=2.9.0
+    - python-multipart>=0.0.18

@@ -31,6 +31,10 @@ namespace EnMesh
         private string category = "";
 
         [SerializeField]
+        [Tooltip("Server mesh_name from POST /generate; used for POST /auto-layout when set.")]
+        private string layoutSourceMeshName = "";
+
+        [SerializeField]
         [Min(0f)]
         [Tooltip("Horizontal clearance for overlap checks. 0 = estimate from renderers/colliders on this object.")]
         private float clearanceRadius;
@@ -45,6 +49,12 @@ namespace EnMesh
         {
             get => category;
             set => category = value;
+        }
+
+        public string LayoutSourceMeshName
+        {
+            get => layoutSourceMeshName;
+            set => layoutSourceMeshName = value;
         }
 
         public float ClearanceRadius => clearanceRadius;

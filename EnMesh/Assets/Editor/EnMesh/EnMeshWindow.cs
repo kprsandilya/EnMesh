@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 using EnMesh;
 using EnMesh.Editor.AutoLayout;
 using UnityEditor;
@@ -395,8 +396,8 @@ namespace EnMesh.Editor
             EditorGUI.EndDisabledGroup();
 
             EditorGUILayout.HelpBox(
-                "Floor = environment root local XZ at Y = 0. Pipeline: anchors → supports around anchors → "
-                + "any still-unplaced items on free grid cells. Add phases or set CustomPipelineFactory to extend.",
+                "Auto Layout calls the server (/auto-layout) to set Anchor / Support / Fill from mesh names "
+                + "(Layout Source from Generate, else GameObject name), then runs anchors → supports → fill.",
                 MessageType.None);
         }
 
@@ -413,6 +414,11 @@ namespace EnMesh.Editor
 
         private void RunAutoLayout()
         {
+            RunAutoLayoutAsync();
+        }
+
+        private async void RunAutoLayoutAsync()
+        {
             if (_environmentRoot == null)
             {
                 _status = "Error: assign Environment Root first.";
@@ -428,10 +434,38 @@ namespace EnMesh.Editor
                 return;
             }
 
-            var undoTargets = new UnityEngine.Object[items.Length];
-            for (int i = 0; i < items.Length; i++)
-                undoTargets[i] = items[i].transform;
+            int n = items.Length;
+            var undoTargets = new UnityEngine.Object[n * 2];
+            for (int i = 0; i < n; i++)
+            {
+                undoTargets[i] = items[i];
+                undoTargets[i + n] = items[i].transform;
+            }
+
             Undo.RecordObjects(undoTargets, "EnMesh Auto Layout");
+
+            var names = new string[n];
+            for (int i = 0; i < n; i++)
+            {
+                string src = items[i].LayoutSourceMeshName;
+                names[i] = string.IsNullOrEmpty(src) ? items[i].gameObject.name : src;
+            }
+
+            CancellationToken ct = _cts != null ? _cts.Token : CancellationToken.None;
+            try
+            {
+                _status = "Auto Layout: classifying meshes on server …";
+                Repaint();
+                var layoutRes = await EnMeshClient.AutoLayoutAsync(_serverUrl, names, ct);
+                for (int i = 0; i < n; i++)
+                    items[i].Role = ParsePlacementRole(layoutRes.results[i].category);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[EnMesh] Auto-layout classification skipped: {ex.Message}");
+                _status = $"Warning: classification failed ({ex.Message}) — using existing roles.";
+                Repaint();
+            }
 
             var settings = new LayoutSettings(
                 _layoutCellSize,
@@ -456,6 +490,15 @@ namespace EnMesh.Editor
             }
 
             Repaint();
+        }
+
+        private static PlacementRole ParsePlacementRole(string category)
+        {
+            if (string.Equals(category, "Anchor", StringComparison.OrdinalIgnoreCase))
+                return PlacementRole.Anchor;
+            if (string.Equals(category, "Support", StringComparison.OrdinalIgnoreCase))
+                return PlacementRole.Support;
+            return PlacementRole.Fill;
         }
 
         private static int CountMeshObjectsMissingPlaceableItem(Transform environmentRoot)
@@ -590,12 +633,12 @@ namespace EnMesh.Editor
                 }
 
                 SetStatus("Uploading & generating mesh (this can take a minute) …", 0.2f);
-                byte[] meshBytes = await EnMeshClient.GenerateMeshAsync(
+                (byte[] meshBytes, string meshName) = await EnMeshClient.GenerateMeshAsync(
                     _serverUrl, data, filename,
                     _resolution, _removeBg, "obj", _cts.Token);
 
                 SetStatus("Saving mesh to project …", 0.85f);
-                string assetPath = WriteMeshAsset(meshBytes);
+                string assetPath = WriteMeshAsset(meshBytes, meshName);
                 AssetDatabase.Refresh();
 
                 var imported = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
@@ -606,7 +649,7 @@ namespace EnMesh.Editor
                 }
 
                 SetStatus("Spawning mesh under Environment Root …", 0.92f);
-                SpawnGeneratedMeshUnderEnvironmentRoot(assetPath);
+                SpawnGeneratedMeshUnderEnvironmentRoot(assetPath, meshName);
 
                 _status = $"Success: mesh saved to {assetPath} and parented under '{_environmentRoot.name}'.";
                 _progress = 1f;
@@ -646,7 +689,7 @@ namespace EnMesh.Editor
         }
 
         // ── Helpers ────────────────────────────────────────────────────
-        private void SpawnGeneratedMeshUnderEnvironmentRoot(string assetPath)
+        private void SpawnGeneratedMeshUnderEnvironmentRoot(string assetPath, string layoutSourceMeshName)
         {
             if (_environmentRoot == null)
             {
@@ -675,7 +718,8 @@ namespace EnMesh.Editor
             mf.sharedMesh = mesh;
             var mr = Undo.AddComponent<MeshRenderer>(go);
             mr.sharedMaterial = CreateSpawnMaterial();
-            Undo.AddComponent<PlaceableItem>(go);
+            var placeable = Undo.AddComponent<PlaceableItem>(go);
+            placeable.LayoutSourceMeshName = layoutSourceMeshName ?? "";
 
             Undo.SetCurrentGroupName("EnMesh Spawn Generated Mesh");
             Selection.activeGameObject = go;
@@ -733,15 +777,16 @@ namespace EnMesh.Editor
             return (null, null);
         }
 
-        private static string WriteMeshAsset(byte[] data)
+        private static string WriteMeshAsset(byte[] data, string serverMeshName)
         {
             const string dir = "Assets/EnMesh/Generated";
             if (!Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
 
-            string ts = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string name = $"mesh_{ts}.obj";
-            string path = Path.Combine(dir, name);
+            string baseName = EnMeshEnvironmentTools.SanitizeAssetBaseName(
+                serverMeshName,
+                "generated_mesh");
+            string path = Path.Combine(dir, baseName + ".obj");
             File.WriteAllBytes(path, data);
             return path;
         }
