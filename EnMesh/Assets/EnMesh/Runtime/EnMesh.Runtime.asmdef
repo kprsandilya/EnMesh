@@ -1,12 +1,8 @@
 {
-    "name": "EnMesh.Editor",
-    "rootNamespace": "EnMesh.Editor",
-    "references": [
-        "EnMesh.Runtime"
-    ],
-    "includePlatforms": [
-        "Editor"
-    ],
+    "name": "EnMesh.Runtime",
+    "rootNamespace": "EnMesh",
+    "references": [],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,

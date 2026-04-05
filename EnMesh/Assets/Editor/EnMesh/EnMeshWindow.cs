@@ -1,7 +1,10 @@
 using System;
 using System.IO;
 using System.Threading;
+using EnMesh;
+using EnMesh.Editor.AutoLayout;
 using UnityEditor;
+using UnityEditorInternal;
 using UnityEngine;
 
 namespace EnMesh.Editor
@@ -13,6 +16,15 @@ namespace EnMesh.Editor
         private const string PrefResolution = "EnMesh_Resolution";
         private const string PrefRemoveBg = "EnMesh_RemoveBg";
         private const string PrefEnvironmentRootGoid = "EnMesh_EnvironmentRootGlobalId";
+        private const string PrefLayoutCell = "EnMesh_LayoutCell";
+        private const string PrefLayoutWidth = "EnMesh_LayoutWidth";
+        private const string PrefLayoutDepth = "EnMesh_LayoutDepth";
+        private const string PrefLayoutMinSep = "EnMesh_LayoutMinSep";
+        private const string PrefLayoutUsePhysics = "EnMesh_LayoutUsePhysics";
+        private const string PrefLayoutMask = "EnMesh_LayoutMask";
+        private const string PrefLayoutSeed = "EnMesh_LayoutSeed";
+        private const string PrefFinalizeMeshBase = "EnMesh_FinalizeMeshBase";
+        private const string PrefFinalizePrefabBase = "EnMesh_FinalizePrefabBase";
 
         // ── UI state ───────────────────────────────────────────────────
         private string _serverUrl;
@@ -27,13 +39,24 @@ namespace EnMesh.Editor
 
         [SerializeField] private GameObject _environmentRoot;
 
+        private float _layoutCellSize = 1f;
+        private float _layoutAreaWidth = 10f;
+        private float _layoutAreaDepth = 10f;
+        private float _layoutMinSeparation = 0.2f;
+        private bool _layoutUsePhysics;
+        private LayerMask _layoutPhysicsMask = ~0;
+        private int _layoutSeed;
+
+        private string _finalizeMeshBaseName = EnMeshEnvironmentTools.DefaultCombinedMeshBaseName;
+        private string _finalizePrefabBaseName = EnMeshEnvironmentTools.DefaultPrefabBaseName;
+
         private CancellationTokenSource _cts;
 
         [MenuItem("EnMesh/Generate 3D Mesh %#m")]
         public static void Open()
         {
             var w = GetWindow<EnMeshWindow>("EnMesh");
-            w.minSize = new Vector2(380, 720);
+            w.minSize = new Vector2(400, 900);
         }
 
         // ── Lifecycle ──────────────────────────────────────────────────
@@ -42,6 +65,19 @@ namespace EnMesh.Editor
             _serverUrl = EditorPrefs.GetString(PrefServerUrl, "http://localhost:8000");
             _resolution = EditorPrefs.GetInt(PrefResolution, 256);
             _removeBg = EditorPrefs.GetBool(PrefRemoveBg, true);
+            _layoutCellSize = EditorPrefs.GetFloat(PrefLayoutCell, 1f);
+            _layoutAreaWidth = EditorPrefs.GetFloat(PrefLayoutWidth, 10f);
+            _layoutAreaDepth = EditorPrefs.GetFloat(PrefLayoutDepth, 10f);
+            _layoutMinSeparation = EditorPrefs.GetFloat(PrefLayoutMinSep, 0.2f);
+            _layoutUsePhysics = EditorPrefs.GetBool(PrefLayoutUsePhysics, false);
+            _layoutPhysicsMask = EditorPrefs.GetInt(PrefLayoutMask, ~0);
+            _layoutSeed = EditorPrefs.GetInt(PrefLayoutSeed, 0);
+            _finalizeMeshBaseName = EditorPrefs.GetString(
+                PrefFinalizeMeshBase,
+                EnMeshEnvironmentTools.DefaultCombinedMeshBaseName);
+            _finalizePrefabBaseName = EditorPrefs.GetString(
+                PrefFinalizePrefabBase,
+                EnMeshEnvironmentTools.DefaultPrefabBaseName);
             RestoreEnvironmentRootFromPrefs();
         }
 
@@ -50,6 +86,15 @@ namespace EnMesh.Editor
             EditorPrefs.SetString(PrefServerUrl, _serverUrl);
             EditorPrefs.SetInt(PrefResolution, _resolution);
             EditorPrefs.SetBool(PrefRemoveBg, _removeBg);
+            EditorPrefs.SetFloat(PrefLayoutCell, _layoutCellSize);
+            EditorPrefs.SetFloat(PrefLayoutWidth, _layoutAreaWidth);
+            EditorPrefs.SetFloat(PrefLayoutDepth, _layoutAreaDepth);
+            EditorPrefs.SetFloat(PrefLayoutMinSep, _layoutMinSeparation);
+            EditorPrefs.SetBool(PrefLayoutUsePhysics, _layoutUsePhysics);
+            EditorPrefs.SetInt(PrefLayoutMask, _layoutPhysicsMask);
+            EditorPrefs.SetInt(PrefLayoutSeed, _layoutSeed);
+            EditorPrefs.SetString(PrefFinalizeMeshBase, _finalizeMeshBaseName ?? "");
+            EditorPrefs.SetString(PrefFinalizePrefabBase, _finalizePrefabBaseName ?? "");
             PersistEnvironmentRootToPrefs();
             CancelGeneration();
         }
@@ -201,16 +246,34 @@ namespace EnMesh.Editor
                 CreateNewEnvironmentRoot();
             EditorGUILayout.EndHorizontal();
 
+            DrawAutoLayout();
+
+            EditorGUILayout.Space(4);
+            EditorGUILayout.LabelField("Finalize output", EditorStyles.boldLabel);
+            _finalizeMeshBaseName = EditorGUILayout.TextField(
+                new GUIContent(
+                    "Combined mesh name",
+                    "File base name only (no .asset). Saved under Assets/Generated."),
+                _finalizeMeshBaseName ?? "");
+            _finalizePrefabBaseName = EditorGUILayout.TextField(
+                new GUIContent(
+                    "Prefab name",
+                    "File base name only (no .prefab). Saved under Assets/Generated."),
+                _finalizePrefabBaseName ?? "");
+
             EditorGUI.BeginDisabledGroup(_environmentRoot == null
                                          || _environmentRoot.transform.childCount == 0);
             if (GUILayout.Button("Finalize Environment", GUILayout.Height(32)))
                 FinalizeEnvironment();
             EditorGUI.EndDisabledGroup();
 
+            string meshOut = $"{EnMeshEnvironmentTools.GeneratedAssetsFolder}/" +
+                             $"{EnMeshEnvironmentTools.SanitizeAssetBaseName(_finalizeMeshBaseName, EnMeshEnvironmentTools.DefaultCombinedMeshBaseName)}.asset";
+            string prefabOut = $"{EnMeshEnvironmentTools.GeneratedAssetsFolder}/" +
+                               $"{EnMeshEnvironmentTools.SanitizeAssetBaseName(_finalizePrefabBaseName, EnMeshEnvironmentTools.DefaultPrefabBaseName)}.prefab";
             EditorGUILayout.HelpBox(
                 "Finalize duplicates the root in memory only, merges all MeshFilters into one mesh, "
-                + $"saves {EnMeshEnvironmentTools.CombinedMeshAssetPath} and "
-                + $"{EnMeshEnvironmentTools.FinalPrefabPath}, then discards the duplicate. "
+                + $"then saves:\n• {meshOut}\n• {prefabOut}\n"
                 + "Your original hierarchy is not modified.",
                 MessageType.None);
 
@@ -267,6 +330,174 @@ namespace EnMesh.Editor
         }
 
         // ── Environment ────────────────────────────────────────────────
+        private void DrawAutoLayout()
+        {
+            EditorGUILayout.Space(6);
+            EditorGUILayout.LabelField("Auto layout", EditorStyles.boldLabel);
+
+            _layoutCellSize = EditorGUILayout.FloatField(
+                "Grid cell size",
+                Mathf.Max(0.05f, _layoutCellSize));
+            _layoutAreaWidth = EditorGUILayout.FloatField(
+                "Area width (local X)",
+                Mathf.Max(_layoutCellSize, _layoutAreaWidth));
+            _layoutAreaDepth = EditorGUILayout.FloatField(
+                "Area depth (local Z)",
+                Mathf.Max(_layoutCellSize, _layoutAreaDepth));
+            _layoutMinSeparation = EditorGUILayout.FloatField(
+                "Min separation",
+                Mathf.Max(0f, _layoutMinSeparation));
+            _layoutUsePhysics = EditorGUILayout.Toggle(
+                new GUIContent(
+                    "Physics overlap check",
+                    "Uses Physics.CheckSphere for scene colliders (static props, ground, etc.)."),
+                _layoutUsePhysics);
+
+            using (new EditorGUI.DisabledScope(!_layoutUsePhysics))
+                DrawPhysicsLayersMaskField();
+
+            _layoutSeed = EditorGUILayout.IntField(
+                new GUIContent("Random seed", "0 = pick a new seed each run (layouts vary)."),
+                _layoutSeed);
+
+            int placeableCount = _environmentRoot != null
+                ? _environmentRoot.GetComponentsInChildren<PlaceableItem>(true).Length
+                : 0;
+            int meshWithoutPlaceable = _environmentRoot != null
+                ? CountMeshObjectsMissingPlaceableItem(_environmentRoot.transform)
+                : 0;
+
+            if (_environmentRoot != null && placeableCount == 0)
+            {
+                string extra = meshWithoutPlaceable > 0
+                    ? $" {meshWithoutPlaceable} child object(s) have a mesh but no PlaceableItem — use the button below."
+                    : " Files in EnMesh/Generated are only assets until you drag instances into the scene under this root, "
+                      + "or use Generate 3D Mesh (which adds PlaceableItem automatically).";
+                EditorGUILayout.HelpBox(
+                    "Auto Layout only considers **scene objects** under Environment Root that have a **PlaceableItem** "
+                    + "(Role: Anchor / Support / Fill). Optional Category is for custom phases."
+                    + extra,
+                    MessageType.Warning);
+            }
+
+            EditorGUI.BeginDisabledGroup(_environmentRoot == null || meshWithoutPlaceable == 0);
+            if (GUILayout.Button(
+                    meshWithoutPlaceable > 0
+                        ? $"Add PlaceableItem to {meshWithoutPlaceable} mesh object(s)"
+                        : "Add PlaceableItem to mesh objects",
+                    GUILayout.Height(24)))
+                AddPlaceableItemToMeshObjectsUnderRoot();
+            EditorGUI.EndDisabledGroup();
+
+            EditorGUI.BeginDisabledGroup(_environmentRoot == null || placeableCount == 0);
+            if (GUILayout.Button("Auto Layout", GUILayout.Height(32)))
+                RunAutoLayout();
+            EditorGUI.EndDisabledGroup();
+
+            EditorGUILayout.HelpBox(
+                "Floor = environment root local XZ at Y = 0. Pipeline: anchors → supports around anchors → "
+                + "any still-unplaced items on free grid cells. Add phases or set CustomPipelineFactory to extend.",
+                MessageType.None);
+        }
+
+        /// <summary>
+        /// LayerMaskField is not available on all Unity versions; MaskField + layer names is the usual fallback.
+        /// </summary>
+        private void DrawPhysicsLayersMaskField()
+        {
+            _layoutPhysicsMask = EditorGUILayout.MaskField(
+                new GUIContent("Physics layers"),
+                (int)_layoutPhysicsMask,
+                InternalEditorUtility.layers);
+        }
+
+        private void RunAutoLayout()
+        {
+            if (_environmentRoot == null)
+            {
+                _status = "Error: assign Environment Root first.";
+                Repaint();
+                return;
+            }
+
+            PlaceableItem[] items = _environmentRoot.GetComponentsInChildren<PlaceableItem>(true);
+            if (items.Length == 0)
+            {
+                _status = "Error: no PlaceableItem components under the environment root.";
+                Repaint();
+                return;
+            }
+
+            var undoTargets = new UnityEngine.Object[items.Length];
+            for (int i = 0; i < items.Length; i++)
+                undoTargets[i] = items[i].transform;
+            Undo.RecordObjects(undoTargets, "EnMesh Auto Layout");
+
+            var settings = new LayoutSettings(
+                _layoutCellSize,
+                _layoutAreaWidth,
+                _layoutAreaDepth,
+                _layoutMinSeparation,
+                _layoutUsePhysics,
+                _layoutPhysicsMask,
+                0.05f,
+                _layoutSeed == 0 ? (int?)null : _layoutSeed);
+
+            LayoutResult result = EnvironmentAutoLayout.Run(_environmentRoot.transform, settings);
+            if (result.Ok)
+            {
+                _status = $"Success: {result.Message}";
+                Debug.Log($"[EnMesh] {result.Message}");
+            }
+            else
+            {
+                _status = $"Error: {result.Message}";
+                Debug.LogWarning($"[EnMesh] {result.Message}");
+            }
+
+            Repaint();
+        }
+
+        private static int CountMeshObjectsMissingPlaceableItem(Transform environmentRoot)
+        {
+            int n = 0;
+            foreach (MeshFilter mf in environmentRoot.GetComponentsInChildren<MeshFilter>(true))
+            {
+                if (mf.sharedMesh == null) continue;
+                if (mf.GetComponent<MeshRenderer>() == null) continue;
+                if (mf.GetComponent<PlaceableItem>() != null) continue;
+                n++;
+            }
+
+            return n;
+        }
+
+        private void AddPlaceableItemToMeshObjectsUnderRoot()
+        {
+            if (_environmentRoot == null) return;
+
+            int added = 0;
+            Undo.IncrementCurrentGroup();
+            foreach (MeshFilter mf in _environmentRoot.GetComponentsInChildren<MeshFilter>(true))
+            {
+                if (mf.sharedMesh == null) continue;
+                if (mf.GetComponent<MeshRenderer>() == null) continue;
+                if (mf.GetComponent<PlaceableItem>() != null) continue;
+                Undo.AddComponent<PlaceableItem>(mf.gameObject);
+                added++;
+            }
+
+            Undo.SetCurrentGroupName("EnMesh Add PlaceableItem");
+
+            if (added > 0)
+                Debug.Log($"[EnMesh] Added PlaceableItem to {added} object(s) under '{_environmentRoot.name}'.");
+
+            _status = added > 0
+                ? $"Added PlaceableItem to {added} mesh object(s). Set Role (Anchor / Support / Fill) in the Inspector."
+                : "No mesh objects needed PlaceableItem (already have it, or missing MeshRenderer / mesh).";
+            Repaint();
+        }
+
         private void CreateNewEnvironmentRoot()
         {
             Debug.Log("[EnMesh] Creating new EnvironmentRoot GameObject …");
@@ -301,10 +532,16 @@ namespace EnMesh.Editor
 
             Debug.Log($"[EnMesh] Finalize Environment: processing root '{_environmentRoot.name}' …");
 
-            bool ok = EnMeshEnvironmentTools.TryFinalizeEnvironment(_environmentRoot, out string err);
+            bool ok = EnMeshEnvironmentTools.TryFinalizeEnvironment(
+                _environmentRoot,
+                _finalizeMeshBaseName,
+                _finalizePrefabBaseName,
+                out string meshPath,
+                out string prefabPath,
+                out string err);
             if (ok)
             {
-                _status = $"Success: combined mesh and prefab saved under {EnMeshEnvironmentTools.GeneratedAssetsFolder}.";
+                _status = $"Success: saved\n{meshPath}\n{prefabPath}";
                 Debug.Log("[EnMesh] Finalize Environment completed successfully.");
             }
             else
@@ -438,6 +675,7 @@ namespace EnMesh.Editor
             mf.sharedMesh = mesh;
             var mr = Undo.AddComponent<MeshRenderer>(go);
             mr.sharedMaterial = CreateSpawnMaterial();
+            Undo.AddComponent<PlaceableItem>(go);
 
             Undo.SetCurrentGroupName("EnMesh Spawn Generated Mesh");
             Selection.activeGameObject = go;

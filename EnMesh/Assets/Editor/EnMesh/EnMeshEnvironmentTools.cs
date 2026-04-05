@@ -11,13 +11,13 @@ namespace EnMesh.Editor
 {
     /// <summary>
     /// Combines meshes under an environment root (working on a duplicate only) and writes
-    /// <see cref="CombinedMeshAssetPath"/> + <see cref="FinalPrefabPath"/>.
+    /// mesh + prefab under <see cref="GeneratedAssetsFolder"/>.
     /// </summary>
     public static class EnMeshEnvironmentTools
     {
         public const string GeneratedAssetsFolder = "Assets/Generated";
-        public const string CombinedMeshAssetPath = "Assets/Generated/combined.asset";
-        public const string FinalPrefabPath = "Assets/Generated/final.prefab";
+        public const string DefaultCombinedMeshBaseName = "combined";
+        public const string DefaultPrefabBaseName = "final";
 
         /// <summary>
         /// Ensures <see cref="GeneratedAssetsFolder"/> exists and is registered in the AssetDatabase.
@@ -72,9 +72,19 @@ namespace EnMesh.Editor
         /// meshes in the duplicate, saves assets, then destroys the duplicate. Does not modify
         /// the original hierarchy.
         /// </summary>
-        public static bool TryFinalizeEnvironment(GameObject environmentRoot, out string errorMessage)
+        /// <param name="meshAssetBaseName">File name without extension (e.g. "LivingRoom_Mesh").</param>
+        /// <param name="prefabAssetBaseName">Prefab file name without extension.</param>
+        public static bool TryFinalizeEnvironment(
+            GameObject environmentRoot,
+            string meshAssetBaseName,
+            string prefabAssetBaseName,
+            out string meshAssetPath,
+            out string prefabAssetPath,
+            out string errorMessage)
         {
             errorMessage = null;
+            meshAssetPath = null;
+            prefabAssetPath = null;
 
             if (environmentRoot == null)
             {
@@ -93,6 +103,11 @@ namespace EnMesh.Editor
                 errorMessage = folderError;
                 return false;
             }
+
+            string meshBase = SanitizeAssetBaseName(meshAssetBaseName, DefaultCombinedMeshBaseName);
+            string prefabBase = SanitizeAssetBaseName(prefabAssetBaseName, DefaultPrefabBaseName);
+            meshAssetPath = $"{GeneratedAssetsFolder}/{meshBase}.asset";
+            prefabAssetPath = $"{GeneratedAssetsFolder}/{prefabBase}.prefab";
 
             GameObject duplicate = null;
             Mesh combinedMesh = null;
@@ -125,23 +140,23 @@ namespace EnMesh.Editor
                 }
 
                 Debug.Log("[EnMesh] Finalize: writing combined mesh asset …");
-                if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(CombinedMeshAssetPath) != null)
+                if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(meshAssetPath) != null)
                 {
-                    AssetDatabase.DeleteAsset(CombinedMeshAssetPath);
+                    AssetDatabase.DeleteAsset(meshAssetPath);
                     AssetDatabase.SaveAssets();
                     AssetDatabase.Refresh();
                 }
 
-                combinedMesh.name = "CombinedEnvironment";
+                combinedMesh.name = meshBase;
 
                 try
                 {
-                    AssetDatabase.CreateAsset(combinedMesh, CombinedMeshAssetPath);
+                    AssetDatabase.CreateAsset(combinedMesh, meshAssetPath);
                 }
                 catch (Exception ex)
                 {
                     errorMessage =
-                        $"CreateAsset failed for '{CombinedMeshAssetPath}': {ex.Message}. "
+                        $"CreateAsset failed for '{meshAssetPath}': {ex.Message}. "
                         + "Ensure Assets/Generated exists as a project folder and check the Console.";
                     UnityEngine.Object.DestroyImmediate(combinedMesh);
                     combinedMesh = null;
@@ -152,11 +167,11 @@ namespace EnMesh.Editor
                 AssetDatabase.Refresh();
 
                 Mesh persistedMesh =
-                    AssetDatabase.LoadAssetAtPath<Mesh>(CombinedMeshAssetPath);
+                    AssetDatabase.LoadAssetAtPath<Mesh>(meshAssetPath);
                 if (persistedMesh == null)
                 {
                     errorMessage =
-                        $"Failed to load mesh at '{CombinedMeshAssetPath}' after CreateAsset. "
+                        $"Failed to load mesh at '{meshAssetPath}' after CreateAsset. "
                         + "See earlier Unity Console messages for the exact import/create error.";
                     return false;
                 }
@@ -164,8 +179,8 @@ namespace EnMesh.Editor
                 if (sharedMat == null)
                     sharedMat = CreateFallbackLitMaterial();
 
-                Debug.Log("[EnMesh] Finalize: creating FinalEnvironment and saving prefab …");
-                GameObject finalGo = new GameObject("FinalEnvironment");
+                Debug.Log("[EnMesh] Finalize: creating combined object and saving prefab …");
+                GameObject finalGo = new GameObject(prefabBase);
 
                 if (!TryMoveToActiveScene(finalGo, out string sceneError))
                 {
@@ -179,14 +194,14 @@ namespace EnMesh.Editor
                 var mr = finalGo.AddComponent<MeshRenderer>();
                 mr.sharedMaterial = ResolveMaterialForPrefab(sharedMat);
 
-                if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(FinalPrefabPath) != null)
+                if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(prefabAssetPath) != null)
                 {
-                    AssetDatabase.DeleteAsset(FinalPrefabPath);
+                    AssetDatabase.DeleteAsset(prefabAssetPath);
                     AssetDatabase.SaveAssets();
                     AssetDatabase.Refresh();
                 }
 
-                GameObject prefabRoot = PrefabUtility.SaveAsPrefabAsset(finalGo, FinalPrefabPath);
+                GameObject prefabRoot = PrefabUtility.SaveAsPrefabAsset(finalGo, prefabAssetPath);
                 UnityEngine.Object.DestroyImmediate(finalGo);
 
                 if (prefabRoot == null)
@@ -200,8 +215,8 @@ namespace EnMesh.Editor
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
 
-                Debug.Log($"[EnMesh] Finalize: saved mesh → {CombinedMeshAssetPath}");
-                Debug.Log($"[EnMesh] Finalize: saved prefab → {FinalPrefabPath}");
+                Debug.Log($"[EnMesh] Finalize: saved mesh → {meshAssetPath}");
+                Debug.Log($"[EnMesh] Finalize: saved prefab → {prefabAssetPath}");
 
                 Selection.activeObject = prefabRoot;
                 EditorGUIUtility.PingObject(prefabRoot);
@@ -280,6 +295,26 @@ namespace EnMesh.Editor
                 $"[EnMesh] Finalize: combined mesh has {combinedMesh.vertexCount} vertices, " +
                 $"{combinedMesh.triangles.Length / 3} triangles.");
             return true;
+        }
+
+        /// <summary>Safe file base name for .asset / .prefab (no path, no extension).</summary>
+        public static string SanitizeAssetBaseName(string input, string fallback)
+        {
+            if (string.IsNullOrWhiteSpace(input))
+                return fallback;
+
+            string s = input.Trim();
+            if (s.EndsWith(".asset", StringComparison.OrdinalIgnoreCase))
+                s = s[..^6];
+            if (s.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                s = s[..^7];
+
+            foreach (char c in Path.GetInvalidFileNameChars())
+                s = s.Replace(c, '_');
+            s = s.Replace('\\', '_').Replace('/', '_').Trim('.', '_', ' ');
+            if (string.IsNullOrWhiteSpace(s))
+                return fallback;
+            return s;
         }
 
         private static Material CreateFallbackLitMaterial()
