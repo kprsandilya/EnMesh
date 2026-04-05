@@ -26,7 +26,7 @@ class MeshGenerator:
     """Wraps TripoSR to turn a single image into a 3-D mesh."""
 
     def __init__(self, device: str = "cpu", chunk_size: int = 4096) -> None:
-        self.device = device
+        self.device = self._resolve_device(device)
         self.chunk_size = chunk_size
         self._model = None
         self._rembg_session = None
@@ -42,6 +42,22 @@ class MeshGenerator:
     @property
     def tsr_import_error(self) -> str | None:
         return _TSR_IMPORT_ERROR
+
+    @staticmethod
+    def _resolve_device(device: str) -> str:
+        """Use CPU when CUDA is requested but unavailable (CPU-only hosts / Docker)."""
+        d = (device or "cpu").strip()
+        if not d.lower().startswith("cuda"):
+            return d
+        import torch  # noqa: F811
+
+        if not torch.cuda.is_available():
+            logger.warning(
+                "Device %r requested but CUDA is not available — using cpu",
+                device,
+            )
+            return "cpu"
+        return d
 
     def load(self, model_id: str = "stabilityai/TripoSR") -> None:
         if not _HAS_TSR:

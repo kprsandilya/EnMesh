@@ -6,6 +6,8 @@ services:
     environment:
       - ENMESH_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
       - ENMESH_DEVICE=cpu
+      - CUDA_VISIBLE_DEVICES=
+      - NVIDIA_VISIBLE_DEVICES=void
       - ENMESH_RESOLUTION=128
       - ENMESH_CHUNK_SIZE=4096
     volumes:

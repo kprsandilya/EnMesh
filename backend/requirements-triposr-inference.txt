@@ -1,0 +1,12 @@
+# TripoSR runtime deps for mesh extraction (tsr.system + torchmcubes).
+# Full upstream requirements.txt also pulls xatlas/moderngl/gradio — often unnecessary
+# for the API and can break slim Docker builds; keep this list minimal.
+
+omegaconf==2.3.0
+einops==0.7.0
+git+https://github.com/tatsy/torchmcubes.git
+transformers>=4.35.0
+trimesh>=4.0.5
+huggingface-hub
+Pillow>=10.4.0
+imageio
