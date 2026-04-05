@@ -22,6 +22,7 @@ namespace EnMesh.Editor
         {
             public string mesh_path;
             public string mesh_name;
+            public string source_stem;
             public string download_url;
         }
 
@@ -37,8 +38,9 @@ namespace EnMesh.Editor
             public MeshNameEntryDto[] meshes;
         }
 
+        /// <summary>One entry from POST /auto-layout (public for API accessibility rules).</summary>
         [Serializable]
-        private class AutoLayoutMeshResultDto
+        public class AutoLayoutMeshResultDto
         {
             public string mesh_name;
             public string absolute_path;
@@ -46,12 +48,12 @@ namespace EnMesh.Editor
         }
 
         [Serializable]
-        private class AutoLayoutResponseDto
+        public class AutoLayoutResponseDto
         {
             public AutoLayoutMeshResultDto[] results;
         }
 
-        public static async Task<(byte[] meshBytes, string meshName)> GenerateMeshAsync(
+        public static async Task<(byte[] meshBytes, string meshName, string assetStem)> GenerateMeshAsync(
             string serverUrl,
             byte[] imageData,
             string filename,
@@ -91,6 +93,10 @@ namespace EnMesh.Editor
                 ? "mesh"
                 : meta.mesh_name;
 
+            string assetStem = string.IsNullOrWhiteSpace(meta.source_stem)
+                ? Path.GetFileNameWithoutExtension(filename)
+                : meta.source_stem;
+
             string getUrl = meta.download_url.StartsWith("http", StringComparison.OrdinalIgnoreCase)
                 ? meta.download_url
                 : $"{serverUrl.TrimEnd('/')}{meta.download_url}";
@@ -98,7 +104,7 @@ namespace EnMesh.Editor
             using var get = await Http.GetAsync(getUrl, ct);
             get.EnsureSuccessStatusCode();
             byte[] meshBytes = await get.Content.ReadAsByteArrayAsync();
-            return (meshBytes, meshName);
+            return (meshBytes, meshName, assetStem);
         }
 
         public static async Task<AutoLayoutResponseDto> AutoLayoutAsync(

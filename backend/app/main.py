@@ -14,6 +14,7 @@ from starlette.staticfiles import StaticFiles
 from app import config
 from app.classification import AutoLayoutClassifierService, SentenceEmbeddingRuntime
 from app.generation import MeshGenerator
+from app.filename_safe import sanitize_stem_for_storage, stem_from_upload
 from app.mesh_output import save_generated_mesh
 from app.schemas import (
     AutoLayoutMeshOut,
@@ -102,6 +103,7 @@ async def generate(
         raise HTTPException(400, detail=f"Could not decode image: {exc}") from exc
 
     filename = image.filename or "upload.png"
+    source_stem = sanitize_stem_for_storage(stem_from_upload(filename))
     loop = asyncio.get_running_loop()
     mesh = await loop.run_in_executor(
         None,
@@ -125,6 +127,7 @@ async def generate(
     return GenerateMeshResponse(
         mesh_path=str(abs_path),
         mesh_name=mesh_name,
+        source_stem=source_stem,
         download_url=download_url,
     )
 

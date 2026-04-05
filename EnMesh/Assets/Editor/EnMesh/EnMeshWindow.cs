@@ -7,6 +7,7 @@ using EnMesh.Editor.AutoLayout;
 using UnityEditor;
 using UnityEditorInternal;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace EnMesh.Editor
 {
@@ -633,13 +634,17 @@ namespace EnMesh.Editor
                 }
 
                 SetStatus("Uploading & generating mesh (this can take a minute) …", 0.2f);
-                (byte[] meshBytes, string meshName) = await EnMeshClient.GenerateMeshAsync(
+                (byte[] meshBytes, string meshName, string assetStem) = await EnMeshClient.GenerateMeshAsync(
                     _serverUrl, data, filename,
                     _resolution, _removeBg, "obj", _cts.Token);
 
                 SetStatus("Saving mesh to project …", 0.85f);
-                string assetPath = WriteMeshAsset(meshBytes, meshName);
-                AssetDatabase.Refresh();
+                string assetPath = WriteMeshAsset(meshBytes, assetStem, meshName);
+                assetPath = assetPath.Replace("\\", "/");
+                // Refresh alone is async; OBJ sub-meshes may not exist until import finishes.
+                AssetDatabase.ImportAsset(
+                    assetPath,
+                    ImportAssetOptions.ForceSynchronousImport);
 
                 var imported = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
                 if (imported != null)
@@ -689,7 +694,10 @@ namespace EnMesh.Editor
         }
 
         // ── Helpers ────────────────────────────────────────────────────
-        private void SpawnGeneratedMeshUnderEnvironmentRoot(string assetPath, string layoutSourceMeshName)
+        private void SpawnGeneratedMeshUnderEnvironmentRoot(
+            string assetPath,
+            string layoutSourceMeshName,
+            bool allowDelayedRetry = true)
         {
             if (_environmentRoot == null)
             {
@@ -697,10 +705,29 @@ namespace EnMesh.Editor
                 return;
             }
 
+            assetPath = assetPath.Replace("\\", "/");
+            AssetDatabase.ImportAsset(
+                assetPath,
+                ImportAssetOptions.ForceSynchronousImport);
+
             Mesh mesh = LoadFirstMeshAtAssetPath(assetPath);
             if (mesh == null)
             {
-                Debug.LogWarning($"[EnMesh] No Mesh sub-asset found at '{assetPath}' — import may still be processing.");
+                if (allowDelayedRetry)
+                {
+                    Debug.Log(
+                        "[EnMesh] Mesh not imported yet — retrying spawn on the next editor tick.");
+                    EditorApplication.delayCall += () =>
+                        SpawnGeneratedMeshUnderEnvironmentRoot(
+                            assetPath,
+                            layoutSourceMeshName,
+                            allowDelayedRetry: false);
+                    return;
+                }
+
+                Debug.LogWarning(
+                    $"[EnMesh] No Mesh sub-asset at '{assetPath}'. " +
+                    "Check the .obj in the Project window and Model Import settings.");
                 return;
             }
 
@@ -741,9 +768,20 @@ namespace EnMesh.Editor
 
         private static Material CreateSpawnMaterial()
         {
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit")
-                            ?? Shader.Find("Universal Render Pipeline/Simple Lit")
-                            ?? Shader.Find("Standard");
+            // URP/HDRP shaders do not render correctly under the Built-in pipeline (invisible / pink).
+            Shader shader;
+            if (GraphicsSettings.defaultRenderPipeline != null)
+            {
+                shader = Shader.Find("Universal Render Pipeline/Lit")
+                         ?? Shader.Find("Universal Render Pipeline/Simple Lit")
+                         ?? Shader.Find("HDRP/Lit");
+            }
+            else
+            {
+                shader = Shader.Find("Standard")
+                         ?? Shader.Find("Legacy Shaders/Diffuse");
+            }
+
             if (shader == null)
                 shader = Shader.Find("Hidden/InternalErrorShader");
             return new Material(shader);
@@ -777,18 +815,55 @@ namespace EnMesh.Editor
             return (null, null);
         }
 
-        private static string WriteMeshAsset(byte[] data, string serverMeshName)
+        /// <summary>
+        /// Writes under Assets/EnMesh/Generated using <paramref name="assetStem"/> (from upload name),
+        /// not the server's unique mesh id. Adds _2, _3, … on collision. Falls back to server id if needed.
+        /// </summary>
+        private static string WriteMeshAsset(byte[] data, string assetStem, string serverMeshName)
         {
             const string dir = "Assets/EnMesh/Generated";
             if (!Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
 
-            string baseName = EnMeshEnvironmentTools.SanitizeAssetBaseName(
-                serverMeshName,
-                "generated_mesh");
+            string preferred = EnMeshEnvironmentTools.SanitizeAssetBaseName(
+                assetStem ?? "",
+                "");
+            if (string.IsNullOrWhiteSpace(preferred))
+            {
+                preferred = EnMeshEnvironmentTools.SanitizeAssetBaseName(
+                    serverMeshName,
+                    "generated_mesh");
+            }
+
+            string baseName = EnsureUniqueGeneratedObjBaseName(dir, preferred, serverMeshName);
             string path = Path.Combine(dir, baseName + ".obj");
             File.WriteAllBytes(path, data);
-            return path;
+            return path.Replace("\\", "/");
+        }
+
+        private static string EnsureUniqueGeneratedObjBaseName(
+            string assetDirUnity,
+            string preferredBase,
+            string serverMeshFallback)
+        {
+            string sub = assetDirUnity.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)
+                ? assetDirUnity.Substring("Assets/".Length)
+                : assetDirUnity;
+            string folderFull = Path.Combine(
+                Application.dataPath,
+                sub.Replace('/', Path.DirectorySeparatorChar));
+
+            for (int n = 0; n < 1000; n++)
+            {
+                string candidate = n == 0
+                    ? preferredBase
+                    : $"{preferredBase}_{n}";
+                string full = Path.Combine(folderFull, candidate + ".obj");
+                if (!File.Exists(full))
+                    return candidate;
+            }
+
+            return EnMeshEnvironmentTools.SanitizeAssetBaseName(serverMeshFallback, "generated_mesh");
         }
     }
 }
