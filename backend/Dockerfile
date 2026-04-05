@@ -20,6 +20,8 @@ RUN git clone --depth 1 https://github.com/VAST-AI-Research/TripoSR.git /opt/Tri
 
 WORKDIR /app
 
+RUN mkdir -p /app/outputs
+
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir \
     torch torchvision --index-url https://download.pytorch.org/whl/cpu

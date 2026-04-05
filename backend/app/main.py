@@ -23,6 +23,9 @@ from app.schemas import (
     HealthResponse,
 )
 
+# StaticFiles validates this directory at mount time (before lifespan runs).
+config.OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+
 LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 
 generator = MeshGenerator(device=config.DEVICE, chunk_size=config.CHUNK_SIZE)
