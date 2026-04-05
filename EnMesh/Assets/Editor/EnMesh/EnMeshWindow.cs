@@ -590,12 +590,12 @@ namespace EnMesh.Editor
                 }
 
                 SetStatus("Uploading & generating mesh (this can take a minute) …", 0.2f);
-                GeneratedMeshResult generated = await EnMeshClient.GenerateMeshAsync(
+                byte[] meshBytes = await EnMeshClient.GenerateMeshAsync(
                     _serverUrl, data, filename,
                     _resolution, _removeBg, "obj", _cts.Token);
 
                 SetStatus("Saving mesh to project …", 0.85f);
-                string assetPath = WriteMeshAsset(generated.MeshBytes);
+                string assetPath = WriteMeshAsset(meshBytes);
                 AssetDatabase.Refresh();
 
                 var imported = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
@@ -606,11 +606,9 @@ namespace EnMesh.Editor
                 }
 
                 SetStatus("Spawning mesh under Environment Root …", 0.92f);
-                SpawnGeneratedMeshUnderEnvironmentRoot(assetPath, generated.Category);
+                SpawnGeneratedMeshUnderEnvironmentRoot(assetPath);
 
-                _status = string.IsNullOrEmpty(generated.Category)
-                    ? $"Success: mesh saved to {assetPath} and parented under '{_environmentRoot.name}'."
-                    : $"Success: category {generated.Category}, saved to {assetPath}, parented under '{_environmentRoot.name}'.";
+                _status = $"Success: mesh saved to {assetPath} and parented under '{_environmentRoot.name}'.";
                 _progress = 1f;
             }
             catch (OperationCanceledException)
@@ -648,7 +646,7 @@ namespace EnMesh.Editor
         }
 
         // ── Helpers ────────────────────────────────────────────────────
-        private void SpawnGeneratedMeshUnderEnvironmentRoot(string assetPath, string serverCategory)
+        private void SpawnGeneratedMeshUnderEnvironmentRoot(string assetPath)
         {
             if (_environmentRoot == null)
             {
@@ -677,10 +675,7 @@ namespace EnMesh.Editor
             mf.sharedMesh = mesh;
             var mr = Undo.AddComponent<MeshRenderer>(go);
             mr.sharedMaterial = CreateSpawnMaterial();
-            var placeable = Undo.AddComponent<PlaceableItem>(go);
-            if (!string.IsNullOrEmpty(serverCategory)
-                && Enum.TryParse(serverCategory, ignoreCase: true, out PlacementRole role))
-                placeable.Role = role;
+            Undo.AddComponent<PlaceableItem>(go);
 
             Undo.SetCurrentGroupName("EnMesh Spawn Generated Mesh");
             Selection.activeGameObject = go;
